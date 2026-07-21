@@ -623,7 +623,7 @@ with tab6:
     if st.button("Run Sampling Study"):
 
         results = run_sampling_study(
-            signal=working_signal,
+            signal=detrended,
             fs=fs,
             sampling_rates=sampling_rates
         )
