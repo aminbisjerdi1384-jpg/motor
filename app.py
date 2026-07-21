@@ -261,7 +261,21 @@ selected_col = st.selectbox("کانال/ستون سنسور برای تحلیل"
 raw_signal = np.asarray(channels[selected_col], dtype=float)
 
 if detected_rpm:
-    st.caption(f"دور موتور تشخیص‌داده‌شده از فایل: {detected_rpm:.0f} RPM (در صورت تمایل از سایدبار اصلاح کنید)")
+    st.markdown(
+    f"""
+    <div style="
+        direction: rtl;
+        text-align: right;
+        color: #9333ea;
+        font-size: 0.85rem;
+        margin-top: -8px;
+        margin-bottom: 12px;
+    ">
+        دور موتور تشخیص‌داده‌شده از فایل: <b>{detected_rpm:.0f} RPM</b> (در صورت تمایل از سایدبار اصلاح کنید)
+    </div>
+    """,
+    unsafe_allow_html=True
+)
     rpm = detected_rpm
 else:
     rpm = rpm_input
