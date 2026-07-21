@@ -8,12 +8,6 @@ This module is designed to answer the question:
     "How does reducing the sampling rate affect fault observability,
      aliasing risk, and the final diagnosis?"
 
-It is intentionally Streamlit-free so the core analysis can be reused in:
-- Streamlit tabs
-- PDF reports
-- unit tests
-- notebooks
-
 What it studies
 ---------------
 For a clean reference signal, it evaluates a list of target sampling rates
@@ -24,15 +18,6 @@ and compares:
 4) Envelope spectrum before/after downsampling
 5) Rule-based diagnosis before/after downsampling
 6) Nyquist / aliasing indicators
-
-Important DSP note
-------------------
-If the signal is downsampled without adequate anti-aliasing, higher-frequency
-content folds back into the baseband. This can distort FFT/PSD plots and can
-hide or mimic bearing-fault harmonics in the envelope spectrum.
-
-This module therefore uses scipy.signal.decimate (zero-phase) via
-preprocessing.downsample_signal() to perform anti-aliasing before decimation.
 """
 from __future__ import annotations
 
@@ -75,6 +60,21 @@ def _safe_float(x: float) -> float:
         return float(x)
     except Exception:
         return float("nan")
+
+
+def _safe_envelope_band(band: Tuple[float, float], current_fs: float) -> Tuple[float, float]:
+    """
+    Adjusts envelope bandpass boundaries to strictly lie below the Nyquist frequency
+    of current_fs to prevent IIR filter instability (numerical blowup).
+    """
+    nyq = current_fs / 2.0
+    low, high = band
+    safe_low = min(low, nyq * 0.25)
+    safe_high = min(high, nyq * 0.90)
+    if safe_high <= safe_low:
+        safe_low = max(1.0, nyq * 0.10)
+        safe_high = nyq * 0.85
+    return (safe_low, safe_high)
 
 
 def _dominant_freq_above(freqs: np.ndarray, magnitude: np.ndarray, threshold_hz: float) -> Optional[float]:
@@ -127,40 +127,6 @@ def run_sampling_study(
     """
     Evaluate the effect of sampling-rate reduction on signal observability
     and diagnosis quality.
-
-    Parameters
-    ----------
-    signal : np.ndarray
-        Reference vibration signal.
-    fs : float
-        Original sampling rate in Hz.
-    target_fs_levels : sequence of float
-        Sampling rates to test, e.g. [12000, 8000, 6000, 4000, 2000].
-    fault_freqs : dict or None
-        Optional theoretical fault frequencies to annotate envelope spectrum.
-    window_size : int
-        Window length used for feature extraction and diagnosis.
-    overlap : float
-        Overlap fraction for windowing.
-    envelope_band : tuple or None
-        Bandpass region for envelope analysis. If None, a reasonable default
-        is chosen from the original fs.
-    filter_order : int
-        Butterworth order for envelope bandpass.
-    diagnosis_thresholds : DiagnosisThresholds or None
-        Thresholds used by rule_based_diagnosis.
-    compute_without_anti_aliasing : bool
-        If True, also compute an intentionally naive downsampling branch for
-        educational comparison. This branch is only for demonstration and is
-        not recommended for real use.
-
-    Returns
-    -------
-    dict
-        Keys:
-            reference : analysis of the original signal
-            trials    : dict keyed by target_fs with all metrics
-            summary   : dataframe-like list of records
     """
     clean = remove_dc_offset(np.asarray(signal, dtype=float))
     diagnosis_thresholds = diagnosis_thresholds or DiagnosisThresholds()
@@ -171,8 +137,6 @@ def run_sampling_study(
     ref_psd_freqs, ref_psd = compute_psd_welch(clean, fs)
 
     if envelope_band is None:
-        # A conservative default band suitable for bearing resonance studies.
-        # It is intentionally broad so the demo still works for many datasets.
         nyq = fs / 2.0
         low = min(1000.0, nyq * 0.25)
         high = min(5000.0, nyq * 0.9)
@@ -180,8 +144,9 @@ def run_sampling_study(
             high = min(nyq * 0.9, low + max(200.0, nyq * 0.1))
         envelope_band = (low, high)
 
+    ref_env_band = _safe_envelope_band(envelope_band, fs)
     ref_env, ref_env_freqs, ref_env_mag = envelope_analysis_pipeline(
-        clean, fs, band=envelope_band, filter_order=filter_order
+        clean, fs, band=ref_env_band, filter_order=filter_order
     )
     ref_diag = rule_based_diagnosis(ref_features, diagnosis_thresholds)
 
@@ -201,8 +166,6 @@ def run_sampling_study(
     trials: Dict[float, dict] = {}
     summary_rows: List[dict] = []
 
-    # Estimate the highest important frequency in the reference signal.
-    # This is used for an intuitive aliasing warning.
     ref_dom_freq = _max_peak_freq(ref_fft_freqs, ref_fft_mag, fmin=0.0)
 
     for idx, target_fs in enumerate(target_fs_levels):
@@ -218,7 +181,6 @@ def run_sampling_study(
             down_sig, actual_fs = downsample_signal(clean, fs, target_fs)
             anti_alias_used = True
 
-        # Optional naive branch for aliasing demonstration (do NOT use for real analysis)
         if compute_without_anti_aliasing and target_fs < fs:
             factor = max(1, int(round(fs / target_fs)))
             naive_sig = clean[::factor].copy()
@@ -231,21 +193,30 @@ def run_sampling_study(
         aliasing_risk = bool(ref_dom_freq is not None and ref_dom_freq > nyquist)
 
         # Signal-level analyses on the downsampled signal
-        ds_features = extract_features_dataframe(down_sig, actual_fs, min(int(window_size), len(down_sig)), overlap)
+        ds_features = extract_features_dataframe(
+            down_sig, actual_fs, min(int(window_size), len(down_sig)), overlap
+        )
         ds_fft_freqs, ds_fft_mag = compute_fft(down_sig, actual_fs)
         ds_psd_freqs, ds_psd = compute_psd_welch(down_sig, actual_fs)
+
+        # Dynamic safe envelope band for actual downsampled rate
+        ds_env_band = _safe_envelope_band(envelope_band, actual_fs)
         ds_env, ds_env_freqs, ds_env_mag = envelope_analysis_pipeline(
-            down_sig, actual_fs, band=envelope_band, filter_order=filter_order
+            down_sig, actual_fs, band=ds_env_band, filter_order=filter_order
         )
         ds_diag = rule_based_diagnosis(ds_features, diagnosis_thresholds)
 
         # Naive branch (optional)
         if naive_sig is not None:
-            naive_features = extract_features_dataframe(naive_sig, naive_fs, min(int(window_size), len(naive_sig)), overlap)
+            naive_features = extract_features_dataframe(
+                naive_sig, naive_fs, min(int(window_size), len(naive_sig)), overlap
+            )
             naive_fft_freqs, naive_fft_mag = compute_fft(naive_sig, naive_fs)
             naive_psd_freqs, naive_psd = compute_psd_welch(naive_sig, naive_fs)
+
+            naive_env_band = _safe_envelope_band(envelope_band, naive_fs)
             naive_env, naive_env_freqs, naive_env_mag = envelope_analysis_pipeline(
-                naive_sig, naive_fs, band=envelope_band, filter_order=filter_order
+                naive_sig, naive_fs, band=naive_env_band, filter_order=filter_order
             )
             naive_diag = rule_based_diagnosis(naive_features, diagnosis_thresholds)
         else:
@@ -263,9 +234,6 @@ def run_sampling_study(
         verdict_ref = reference["diagnosis"]["level"]
         verdict_ds = ds_diag["level"]
 
-        # Aliasing threshold for annotation: the largest frequency in the
-        # reference FFT that still meaningfully contributes to the signal.
-        # If it is above Nyquist, aliasing can happen.
         max_sig_freq_est = _max_peak_freq(ref_fft_freqs, ref_fft_mag, fmin=0.0)
         aliasing_label = _aliasing_warning_string(actual_fs, max_sig_freq_est)
 
@@ -333,10 +301,7 @@ def plot_sampling_time_domain(
     study_results: dict,
     zoom_seconds: Tuple[float, float] = (0.05, 0.15),
 ) -> plt.Figure:
-    """
-    Plot a zoomed time-domain comparison for the reference signal and
-    the downsampled trials.
-    """
+    """Plot zoomed time-domain comparison across trials."""
     reference = study_results["reference"]
     trials = study_results["trials"]
 
@@ -375,16 +340,13 @@ def plot_sampling_time_domain(
 
 
 def plot_sampling_fft(study_results: dict) -> plt.Figure:
-    """
-    Plot FFT comparison across all sampling-rate trials.
-    """
+    """Plot FFT comparison across all sampling-rate trials."""
     reference = study_results["reference"]
     trials = study_results["trials"]
 
-    fig = plt.figure(figsize=(11, 7))
+    fig = plt.figure(figsize=(11, 2.2 * (len(trials) + 1)))
     gs = gridspec.GridSpec(len(trials) + 1, 1, hspace=0.45)
 
-    # Reference
     ax0 = fig.add_subplot(gs[0])
     f_ref, m_ref = reference["fft"]
     ax0.plot(f_ref, m_ref, linewidth=0.9, color="#2ca02c", label=f"Reference (fs={reference['fs']:.0f} Hz)")
@@ -393,6 +355,7 @@ def plot_sampling_fft(study_results: dict) -> plt.Figure:
     ax0.grid(alpha=0.25)
     ax0.legend(fontsize=8, loc="upper right")
 
+    ax = ax0
     for i, (target_fs, trial) in enumerate(trials.items(), start=1):
         ax = fig.add_subplot(gs[i])
         f_ds, m_ds = trial["fft"]
@@ -412,9 +375,7 @@ def plot_sampling_fft(study_results: dict) -> plt.Figure:
 
 
 def plot_sampling_psd(study_results: dict) -> plt.Figure:
-    """
-    Plot PSD comparison across all sampling-rate trials.
-    """
+    """Plot PSD comparison across all sampling-rate trials."""
     reference = study_results["reference"]
     trials = study_results["trials"]
 
@@ -441,10 +402,7 @@ def plot_sampling_psd(study_results: dict) -> plt.Figure:
 
 
 def plot_sampling_envelope(study_results: dict) -> plt.Figure:
-    """
-    Plot envelope spectra across sampling-rate trials, with optional fault
-    frequency markers.
-    """
+    """Plot envelope spectra across sampling-rate trials."""
     reference = study_results["reference"]
     trials = study_results["trials"]
     fault_freqs = study_results.get("fault_freqs") or {}
@@ -488,9 +446,7 @@ def plot_sampling_envelope(study_results: dict) -> plt.Figure:
 
 
 def plot_sampling_summary(study_results: dict) -> plt.Figure:
-    """
-    Plot a compact summary of key metrics versus sampling rate.
-    """
+    """Plot a compact summary of key metrics versus sampling rate."""
     df = study_results["summary"].copy()
     if df.empty:
         fig, ax = plt.subplots(figsize=(8, 3))
@@ -533,7 +489,7 @@ def plot_sampling_summary(study_results: dict) -> plt.Figure:
 
 
 # ---------------------------------------------------------------------
-# Streamlit UI helper
+# Streamlit UI helper (Interactive & Reactive)
 # ---------------------------------------------------------------------
 
 def render_sampling_study_tab(
@@ -545,14 +501,12 @@ def render_sampling_study_tab(
     diagnosis_thresholds: Optional[DiagnosisThresholds] = None,
 ):
     """
-    Render an interactive Streamlit tab for sampling-rate / Nyquist study.
-
-    This is designed to be plugged into app.py.
+    Render an interactive and dynamic Streamlit tab for sampling-rate / Nyquist study.
     """
     st.markdown("### 📉 بررسی نرخ نمونه‌برداری، قضیه نایکویست و Aliasing")
     st.info(
         "در این بخش اثر کاهش نرخ نمونه‌برداری بر FFT، PSD، طیف پاکت و تصمیم نهایی سیستم بررسی می‌شود. "
-        "هرچه fs کمتر شود، فرکانس نایکویست پایین‌تر آمده و احتمال از دست رفتن مؤلفه‌های مهم یا aliasing بیشتر می‌شود."
+        "تغییر پارامترها به‌صورت زنده و آنی در نمودارها اعمال می‌شود."
     )
 
     col1, col2, col3 = st.columns(3)
@@ -560,7 +514,7 @@ def render_sampling_study_tab(
         presets = {
             "حفظ کامل (fs اصلی)": [fs],
             "پله‌ای": [fs, fs * 2 / 3, fs / 2, fs / 3, fs / 4],
-            "آموزشی": [fs, 8000, 6000, 4000, 2000],
+            "آموزشی (شدید)": [fs, 6000, 2000, 800],
         }
         preset_name = st.selectbox("سناریوی نمونه‌برداری", list(presets.keys()))
         levels = [float(v) for v in presets[preset_name] if v > 0]
@@ -578,40 +532,29 @@ def render_sampling_study_tab(
         zoom_start = st.number_input("شروع زوم زمانی (s)", min_value=0.0, value=0.05, step=0.01)
         zoom_end = st.number_input("پایان زوم زمانی (s)", min_value=0.01, value=0.15, step=0.01)
 
-    envelope_band = st.session_state.get("sampling_envelope_band")
-    if envelope_band is None:
-        nyq = fs / 2.0
-        default_low = min(1000.0, nyq * 0.25)
-        default_high = min(5000.0, nyq * 0.9)
-        if default_high <= default_low:
-            default_high = min(nyq * 0.9, default_low + max(200.0, nyq * 0.1))
-        envelope_band = (default_low, default_high)
+    nyq = fs / 2.0
+    default_low = min(1000.0, nyq * 0.25)
+    default_high = min(5000.0, nyq * 0.9)
+    if default_high <= default_low:
+        default_high = min(nyq * 0.9, default_low + max(200.0, nyq * 0.1))
+    envelope_band = (default_low, default_high)
 
     filter_order = st.slider("مرتبه فیلتر envelope", 1, 8, 4)
-    run_clicked = st.button("▶ اجرای مطالعه نمونه‌برداری")
 
-    if run_clicked:
-        with st.spinner("در حال تحلیل نرخ نمونه‌برداری..."):
-            study = run_sampling_study(
-                signal=signal,
-                fs=fs,
-                target_fs_levels=levels,
-                fault_freqs=fault_freqs,
-                window_size=window_size,
-                overlap=overlap,
-                envelope_band=envelope_band,
-                filter_order=filter_order,
-                diagnosis_thresholds=diagnosis_thresholds,
-                compute_without_anti_aliasing=False,
-            )
-
-        st.session_state["sampling_study_results"] = study
-        st.session_state["sampling_envelope_band"] = envelope_band
-
-    study = st.session_state.get("sampling_study_results")
-    if study is None:
-        st.caption("پس از اجرای تحلیل، جدول خلاصه و نمودارها اینجا نمایش داده می‌شوند.")
-        return
+    # اجرای آنی محاسبات بدون گیر افتادن در state دکمه
+    with st.spinner("در حال محاسبه آنی..."):
+        study = run_sampling_study(
+            signal=signal,
+            fs=fs,
+            target_fs_levels=levels,
+            fault_freqs=fault_freqs,
+            window_size=window_size,
+            overlap=overlap,
+            envelope_band=envelope_band,
+            filter_order=filter_order,
+            diagnosis_thresholds=diagnosis_thresholds,
+            compute_without_anti_aliasing=False,
+        )
 
     # Summary table
     st.markdown("#### 📋 جدول خلاصه")
@@ -694,10 +637,7 @@ def figures_as_png_bytes(
     study_results: dict,
     zoom_seconds: Tuple[float, float] = (0.05, 0.15),
 ) -> dict:
-    """
-    Convenience function for embedding into PDF reports.
-    Returns a dict of BytesIO objects.
-    """
+    """Convenience function for embedding into PDF reports."""
     fig_time = plot_sampling_time_domain(study_results, zoom_seconds=zoom_seconds)
     fig_fft = plot_sampling_fft(study_results)
     fig_psd = plot_sampling_psd(study_results)
