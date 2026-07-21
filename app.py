@@ -623,7 +623,7 @@ with tab6:
     if st.button("Run Sampling Study"):
 
         results = run_sampling_study(
-            signal=signal,
+            signal=working_signal,
             fs=fs,
             sampling_rates=sampling_rates
         )
