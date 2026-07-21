@@ -36,7 +36,7 @@ import bearing as brg
 import diagnosis as diag
 import anomaly as an
 from noise_study import render_noise_study_tab
-from sampling_study import run_sampling_study
+from sampling_study import render_sampling_study_tab
 import ml_classifier as mlc
 import cwru_loader as cw
 from report import generate_pdf_report
@@ -599,42 +599,13 @@ with tab5:
         overlap=overlap,
     )
 with tab6:
-
-    st.header("Sampling Rate & Nyquist Study")
-
-    st.write(
-        """
-        This experiment evaluates the influence of sampling frequency on
-        vibration-based fault diagnosis.
-
-        The original signal is resampled to several lower sampling rates,
-        then the diagnostic features are recalculated.
-
-        The experiment illustrates the Nyquist criterion and aliasing.
-        """
+    render_sampling_study_tab(
+        signal=detrended,
+        fs=fs,
+        fault_freqs=fault_freqs if show_bearing_freqs else None,
+        window_size=int(window_size),
+        overlap=overlap,
     )
-
-    sampling_rates = st.multiselect(
-        "Sampling frequencies (Hz)",
-        [12000, 8000, 6000, 4000, 2000, 1000],
-        default=[12000, 6000, 2000]
-    )
-
-    if st.button("Run Sampling Study"):
-
-        results = run_sampling_study(
-            signal=detrended,
-            fs=fs,
-            sampling_rates=sampling_rates
-        )
-
-        st.dataframe(results["table"])
-
-        st.pyplot(results["time_fig"])
-
-        st.pyplot(results["fft_fig"])
-
-        st.pyplot(results["feature_fig"])
         
 # --- Tab 7: Features ---------------------------------------------------------
 with tab7:
