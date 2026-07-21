@@ -290,7 +290,7 @@ def render_noise_study_tab(
     st.markdown("###  مطالعه تعاملی اثر نویز و فیلتر بر عیب‌یابی ")
     st.info(
         "در این بخش می‌توانید اثر نویز سفید گوسی  را بر ویژگی‌های سیگنال، طیف پاکت بلبرینگ "
-        "و **تشخیص نهایی سیستم ** ارزیابی کنید."
+        "و تشخیص نهایی سیستم ارزیابی کنید."
     )
 
     # کنترل‌های ورودی در استریم‌لیت
@@ -303,8 +303,8 @@ def render_noise_study_tab(
         order = st.slider("مرتبه فیلتر (Order):", 1, 8, 4)
 
     with col2:
-        st.markdown("**سطوح SNR آزمایشی (dB)**")
-        snr_str = st.text_input("مقادیر SNR (جدا شده با کاما):", "20, 10, 0")
+        st.markdown("**SNR مقدار (dB)**")
+        snr_str = st.text_input(" SNR (جدا شده با کاما):", "20, 10, 0")
         try:
             snr_levels = [int(s.strip()) for s in snr_str.split(",") if s.strip()]
         except ValueError:
@@ -329,7 +329,7 @@ def render_noise_study_tab(
     )
 
     # ۱. جدول مقایسه کمی و وضعیت تشخیص نهایی
-    st.markdown("#### 📋 جدول مقایسه کمی و ارزیابی تغییرات تشخیص ")
+    st.markdown("####  جدول مقایسه کمی و ارزیابی تغییرات تشخیص ")
 
     summary_data = []
     # سطر مرجع
