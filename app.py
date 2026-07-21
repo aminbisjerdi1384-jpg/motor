@@ -203,17 +203,17 @@ with st.sidebar:
                     )
 
 if uploaded_file is None:
-    # کادر آبی راست‌چین و مرتب
+    
     st.markdown(
         """
         <div style="
-            background-color: #e8f4f8;
-            border-right: 5px solid #29b6f6;
+            background-color: #f3e8ff;
+            border-right: 5px solid #9333ea;
             padding: 12px 16px;
             border-radius: 6px;
             direction: rtl;
             text-align: right;
-            color: #014361;
+            color: #581c87;
             margin-bottom: 20px;
             font-size: 0.95rem;
         ">
