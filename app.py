@@ -203,15 +203,19 @@ with st.sidebar:
                     )
 
 if uploaded_file is None:
-    st.info("لطفاً یک فایل CSV، Excel یا .mat (دیتاست CWRU) بارگذاری کنید.")
+    st.info("لطفاً یک فایل با فرمت CSV، Excel یا mat. (دیتابیس CWRU) بارگذاری کنید.")
     st.markdown(
         """
-**راهنمای فرمت فایل ورودی:**
-- CSV/Excel: هر ستون عددی یک کانال سنسور است (مثلاً `vibration_x`, `current`)
-- `.mat`: فایل اصلی دیتاست CWRU (کانال‌های DE/FE/BA و RPM به‌صورت خودکار خوانده می‌شوند)
-- برای دریافت داده واقعی CWRU، اسکریپت `download_cwru_data.py` را روی کامپیوتر خودتان اجرا کنید
-  (این محیط دسترسی اینترنت ندارد)
-        """
+        <div style="direction: rtl; text-align: right;">
+
+        **راهنمای فرمت فایل ورودی:**
+        * **CSV / Excel:** هر ستون عددی یک کانال سنسور است (مثلاً `vibration_x` یا `current`).
+        * **فایل اصلی دیتابیس mat.:** فایل‌های CWRU (کانال‌های DE/FE/BA و RPM) به صورت خودکار خوانده می‌شوند.
+        * برای دریافت داده واقعی CWRU، اسکریپت `download_cwru_data.py` را اجرا کنید (این محیط دسترسی اینترنت ندارد).
+
+        </div>
+        """,
+        unsafe_allow_html=True
     )
     st.stop()
 
