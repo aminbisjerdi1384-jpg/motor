@@ -35,7 +35,7 @@ import envelope as env
 import bearing as brg
 import diagnosis as diag
 import anomaly as an
-import noise_study as ns
+from noise_study import render_noise_study_tab
 import ml_classifier as mlc
 import cwru_loader as cw
 from report import generate_pdf_report
@@ -552,200 +552,15 @@ with tab4:
                 "باند تشدید را تغییر دهید یا از 'تشخیص خودکار باند' استفاده کنید."
             )
 
-
-# --- Tab 5: Noise & Resampling (redesigned) ----------------------------------
+# --- Tab 5: Noise Study (مطالعه اثر نویز و فیلتر) -----------------------------
 with tab5:
-
-    # =========================================================================
-    # Section A  — Single-SNR interactive view
-    # =========================================================================
-    st.subheader("۱) بررسی تعاملی اثر نویز روی یک SNR")
-    st.caption(
-        "از دید سیگنال‌وسیستم: نویز سفید گاوسی در حوزه زمان «شلوغ‌تر»   دیده می‌شود "
-        "ولی تصویر واقعی اثر آن در طیف فرکانسی است — کف طیف بالا می‌رود و "
-        "فیلتر آن را دوباره پایین می‌آورد."
+    render_noise_study_tab(
+        clean_signal=detrended,
+        fs=fs,
+        fault_freqs=fault_freqs if show_bearing_freqs else None,
+        window_size=int(window_size),
+        overlap=overlap,
     )
-
-    snr_target = st.slider(
-        "SNR هدف (dB)", min_value=-10, max_value=30, value=10, step=1,
-    )
-
-    # Build noisy + filtered versions
-    noisy_sig = pp.add_gaussian_noise(working_signal, snr_db=snr_target)
-    if filter_enabled:
-        denoised_sig  = pp.apply_filter(
-            noisy_sig, filter_type, filter_cutoff, fs, order=int(filter_order)
-        )
-        filter_note = (
-            f"فیلتر فعال: نوع={filter_type}، مرتبه={filter_order}"
-        )
-        band_hint = filter_cutoff if filter_type == "bandpass" else None
-    else:
-        _default_fc   = fs * 0.25
-        denoised_sig  = pp.apply_filter(noisy_sig, "lowpass", _default_fc, fs, order=4)
-        filter_note   = f"فیلتر سایدبار غیرفعال بود — فیلتر پایین‌گذر پیش‌فرض (fc={_default_fc:.0f} Hz) استفاده شد."
-        band_hint     = None
-
-    achieved_snr_noisy    = pp.compute_snr_db(working_signal, noisy_sig)
-    achieved_snr_filtered = pp.compute_snr_db(working_signal, denoised_sig)
-
-    m1, m2, m3 = st.columns(3)
-    m1.metric("SNR نویزی (واقعی دB)", f"{achieved_snr_noisy:.1f}")
-    m2.metric("SNR بعد از فیلتر (dB)", f"{achieved_snr_filtered:.1f}")
-    m3.metric(
-        "تغییر SNR توسط فیلتر",
-        f"{achieved_snr_filtered - achieved_snr_noisy:+.1f} dB",
-        delta_color="normal",
-    )
-    st.caption(filter_note)
-
-    # ── A1: Zoomed time-domain view ──────────────────────────────────────
-    st.markdown("**نمودار زوم‌شده زمانی (بازه کوتاه)**")
-    st.caption(
-        "نمودار کامل ۲۰ ثانیه‌ای اثر نویز را نشان نمی‌دهد — در یک پنجره کوتاه‌تر "
-        "نمونه‌های نویز، تحریف پیک‌ها و هموارسازی فیلتر واقعاً دیده می‌شوند."
-    )
-    total_dur = t[-1] - t[0]
-    zoom_col1, zoom_col2 = st.columns(2)
-    with zoom_col1:
-        zoom_s = st.number_input(
-            "شروع پنجره زوم (ثانیه)", min_value=float(t[0]),
-            max_value=float(t[-1]) - 0.01, value=min(0.05, float(t[-1]) * 0.1),
-            step=0.01,
-        )
-    with zoom_col2:
-        zoom_e = st.number_input(
-            "پایان پنجره زوم (ثانیه)", min_value=zoom_s + 0.01,
-            max_value=float(t[-1]), value=min(zoom_s + 0.20, float(t[-1])),
-            step=0.01,
-        )
-
-    zoom_fig = ns.plot_zoomed_triplet(
-        t, working_signal, noisy_sig, denoised_sig,
-        zoom_start=zoom_s, zoom_end=zoom_e,
-        title_suffix=f"SNR={snr_target} dB",
-    )
-    st.pyplot(zoom_fig)
-
-    # ── A2: PSD comparison — the real noise picture ──────────────────────
-    st.markdown("**مقایسه طیف توان (PSD) — قبل / نویزی / فیلترشده**")
-    st.caption(
-        "نویز سفید گاوسی طیف FLAT دارد: کف طیف به‌طور یکنواخت روی تمام فرکانس‌ها بالا می‌رود. "
-        "فیلتر کف را در ناحیه stop-band پایین می‌آورد و SNR پاس‌بند را بهبود می‌دهد — "
-        "این دقیقاً بخش معنادار نویز از دیدگاه سیگنال‌وسیستم است."
-    )
-    psd_fig = ns.plot_psd_triplet(
-        working_signal, noisy_sig, denoised_sig, fs,
-        highlight_band=band_hint,
-    )
-    st.pyplot(psd_fig)
-
-    # =========================================================================
-    # Section B  — SNR Sweep experiment
-    # =========================================================================
-    st.divider()
-    st.subheader("۲) آزمایش Sweep نویز — چه SNR‌ای تشخیص عیب را ممکن می‌کند؟")
-    st.caption(
-        "برای چند سطح SNR مختلف، نویز اضافه می‌شود و سه معیار اندازه‌گیری می‌شود:\n"
-        "• **Kurtosis**: مستقیم‌ترین شاخص ضربه‌ای بودن سیگنال — با نویز به ≈۳ (گاوسی) "
-        "نزدیک می‌شود، فیلتر آن را بازمی‌گرداند.\n"
-        "• **کف طیف (Noise Floor)**: با کم‌شدن SNR بالا می‌رود و پیک‌های BPFO/BPFI "
-        "را دفن می‌کند — فیلتر آن را کاهش می‌دهد.\n"
-        "• **خطای RMS**: مستقیماً دقت بازسازی سیگنال را نشان می‌دهد."
-    )
-
-    # SNR levels selector
-    snr_presets = {
-        "سریع (-5 تا 25، ۷ نقطه)": [-5.0, 0.0, 5.0, 10.0, 15.0, 20.0, 25.0],
-        "دقیق (-10 تا 30، ۱۱ نقطه)": [-10.0, -5.0, 0.0, 5.0, 8.0, 10.0, 12.0, 15.0, 20.0, 25.0, 30.0],
-        "حول آستانه تشخیص (0 تا 15، ۴ نقطه)": [0.0, 5.0, 10.0, 15.0],
-    }
-    preset_label = st.selectbox("مجموعه SNR‌های آزمایشی", list(snr_presets.keys()))
-    sweep_levels = snr_presets[preset_label]
-    st.caption(f"SNR‌های انتخاب‌شده: {sweep_levels} dB")
-
-    sweep_filter_cfg = (
-        {"type": filter_type, "cutoff": filter_cutoff, "order": int(filter_order)}
-        if filter_enabled
-        else {"type": "lowpass", "cutoff": fs * 0.25, "order": 4}
-    )
-
-    # Cache key: rerun only if signal or settings change
-    _sweep_cache_key = f"sweep_{len(working_signal)}_{sweep_levels}_{sweep_filter_cfg}"
-    if st.button("▶ اجرای آزمایش Sweep") or st.session_state.get("_last_sweep_key") == _sweep_cache_key:
-        if st.session_state.get("_last_sweep_key") != _sweep_cache_key or "sweep_df" not in st.session_state:
-            with st.spinner("در حال اجرای sweep نویز…"):
-                sweep_df = ns.run_snr_sweep(
-                    working_signal, fs,
-                    snr_levels=sweep_levels,
-                    filter_cfg=sweep_filter_cfg,
-                )
-                st.session_state["sweep_df"] = sweep_df
-                st.session_state["_last_sweep_key"] = _sweep_cache_key
-        else:
-            sweep_df = st.session_state["sweep_df"]
-
-        # ── Table ────────────────────────────────────────────────────────
-        with st.expander("جدول کامل نتایج Sweep"):
-            st.dataframe(
-                st.session_state["sweep_df"].round(3),
-                use_container_width=True,
-            )
-
-        # ── Plots ────────────────────────────────────────────────────────
-        sweep_fig = ns.plot_snr_curves(st.session_state["sweep_df"])
-        st.pyplot(sweep_fig)
-
-        # ── Textual interpretation ────────────────────────────────────────
-        df_sw = st.session_state["sweep_df"]
-        kurt_clean = float(df_sw["kurtosis_clean"].iloc[0])
-        crossover_row = df_sw[df_sw["kurtosis_noisy"] >= kurt_clean * 0.7]
-        if not crossover_row.empty:
-            crossover_snr = float(crossover_row["target_snr_db"].min())
-            st.info(
-                f"📊 **تفسیر نتایج:**\n\n"
-                f"کurtosis سیگنال اصلی = **{kurt_clean:.2f}**. "
-                f"در SNR ≈ **{crossover_snr:.0f} dB** کurtosis سیگنال نویزی به "
-                f"۷۰٪ مقدار اصلی می‌رسد — آستانه‌ای که تشخیص ضربه‌های "
-                f"بلبرینگ دشوار می‌شود. فیلتر در تمام سطوح SNR کurtosis را "
-                f"بالاتر نگه می‌دارد، که دقیقاً دلیل استفاده از فیلتر پیش از "
-                f"تحلیل پاکت (Envelope Analysis) است."
-            )
-
-    # =========================================================================
-    # Section C  — Downsampling / Nyquist
-    # =========================================================================
-    st.divider()
-    st.subheader("۳) بررسی نرخ نمونه‌برداری (قضیه نایکوئیست)")
-    st.caption(
-        "فرکانس نمونه‌برداری باید حداقل ۲ برابر بالاترین فرکانس موجود در سیگنال باشد. "
-        "اگر fs کاهش دهیم، پیک‌های فرکانسی بالاتر از fs/2 (فرکانس نایکوئیست) "
-        "یا از بین می‌روند یا aliasing می‌دهند — در نمودار طیف مشخص می‌شود."
-    )
-    target_fs_ds = st.slider(
-        "فرکانس نمونه‌برداری هدف (Hz)",
-        min_value=100, max_value=int(fs), value=int(fs / 2), step=100,
-    )
-    down_sig, down_fs = pp.downsample_signal(working_signal, fs, target_fs_ds)
-
-    col_before_ds, col_after_ds = st.columns(2)
-    with col_before_ds:
-        f1, m1 = ft.compute_fft(working_signal, fs)
-        st.pyplot(plot_fft(f1, m1, f"قبل (fs = {fs:.0f} Hz)"))
-    with col_after_ds:
-        f2, m2 = ft.compute_fft(down_sig, down_fs)
-        st.pyplot(plot_fft(f2, m2, f"بعد (fs = {down_fs:.0f} Hz)"))
-
-    st.caption(
-        f"با fs = {down_fs:.0f} Hz، حداکثر فرکانس قابل بازسازی = **{down_fs/2:.0f} Hz** "
-        f"(فرکانس نایکوئیست). هر مولفه فرکانسی بالاتر از این مقدار پیش از decimation "
-        "توسط فیلتر anti-aliasing داخلی scipy حذف می‌شود."
-    )
-    if down_fs / 2 < 200:
-        st.warning(
-            f"⚠️ با fs = {down_fs:.0f} Hz، فرکانس‌های مشخصه بلبرینگ "
-            f"(BPFO ≈ {107:.0f} Hz، BPFI ≈ {162:.0f} Hz) ممکن است از دسترس خارج شوند."
-        )
 
 # --- Tab 6: Features ---------------------------------------------------------
 with tab6:
