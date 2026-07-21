@@ -49,8 +49,8 @@ from utils import (
 
 st.set_page_config(page_title="Motor Insight", page_icon="⚙️", layout="wide")
 
-st.title("⚙️ Motor Insight")
-st.caption("سامانه پایش وضعیت و تشخیص عیب موتور/بلبرینگ بر پایه پردازش سیگنال و یادگیری ماشین")
+st.title(" Motor Insight")
+st.caption("سامانه پایش وضعیت و تشخیص عیب موتور/بلبرینگ بر پایه پردازش سیگنال")
 
 
 # ==========================================================================
@@ -203,7 +203,25 @@ with st.sidebar:
                     )
 
 if uploaded_file is None:
-    st.info("لطفاً یک فایل با فرمت CSV، Excel یا mat. (دیتابیس CWRU) بارگذاری کنید.")
+    # کادر آبی راست‌چین و مرتب
+    st.markdown(
+        """
+        <div style="
+            background-color: #e8f4f8;
+            border-right: 5px solid #29b6f6;
+            padding: 12px 16px;
+            border-radius: 6px;
+            direction: rtl;
+            text-align: right;
+            color: #014361;
+            margin-bottom: 20px;
+            font-size: 0.95rem;
+        ">
+            ℹ️ لطفاً یک فایل با فرمت <b>CSV</b>، <b>Excel</b> یا <b>mat.</b> (دیتابیس CWRU) بارگذاری کنید.
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
     st.markdown(
         """
         <div style="direction: rtl; text-align: right;">
